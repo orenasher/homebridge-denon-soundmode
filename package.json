@@ -1,0 +1,30 @@
+{
+  "name": "homebridge-denon-soundmode",
+  "version": "1.0.0",
+  "description": "Denon AVR sound modes as HomeKit switches with status feedback over Telnet. Tested only on Denon AVR-X2400H.",
+  "main": "index.js",
+  "license": "MIT",
+  "keywords": [
+    "homebridge-plugin",
+    "denon",
+    "avr",
+    "sound-mode"
+  ],
+  "files": [
+    "index.js",
+    "config.schema.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18",
+    "homebridge": ">=1.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orenasher/homebridge-denon-soundmode.git"
+  },
+  "homepage": "https://github.com/orenasher/homebridge-denon-soundmode#readme",
+  "bugs": {
+    "url": "https://github.com/orenasher/homebridge-denon-soundmode/issues"
+  }
+}

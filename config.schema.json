@@ -1,0 +1,37 @@
+{
+  "pluginAlias": "DenonSoundMode",
+  "pluginType": "platform",
+  "singular": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": { "title": "Name", "type": "string", "default": "Denon Sound Modes" },
+      "host": { "title": "Receiver IP", "type": "string", "required": true },
+      "port": { "title": "Telnet port", "type": "integer", "default": 23 },
+      "pollInterval": { "title": "Poll interval (seconds)", "type": "integer", "default": 5 },
+      "groups": {
+        "title": "Groups (one tile each)",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "title": "Group name", "type": "string", "required": true },
+            "modes": {
+              "title": "Modes",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "title": "Name", "type": "string", "required": true },
+                  "command": { "title": "Command (after MS)", "type": "string", "required": true },
+                  "match": { "title": "Status regex (optional)", "type": "string" },
+                  "stateless": { "title": "Button without status", "type": "boolean" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
