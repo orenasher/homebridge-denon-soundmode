@@ -1,5 +1,6 @@
 <p align="center"><img src="icon.svg" width="96" alt="Denon sound modes"></p>
 
+
 # homebridge-denon-soundmode
 
 Homebridge plugin that exposes the sound modes (surround modes) of a Denon AVR as HomeKit switches, with status feedback. Modes are grouped into one accessory (tile) per group.
