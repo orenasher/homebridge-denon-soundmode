@@ -1,7 +1,7 @@
 'use strict';
 const net = require('net');
 
-const PLUGIN = 'homebridge-denon-soundmode';
+const PLUGIN = '@orenasher/homebridge-denon-soundmode';
 const PLATFORM = 'DenonSoundMode';
 
 module.exports = (api) => {

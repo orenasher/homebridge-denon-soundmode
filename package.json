@@ -1,5 +1,5 @@
 {
-  "name": "homebridge-denon-soundmode",
+  "name": "@orenasher/homebridge-denon-soundmode",
   "version": "1.0.0",
   "description": "Denon AVR sound modes as HomeKit switches with status feedback over Telnet. Tested only on Denon AVR-X2400H.",
   "main": "index.js",
