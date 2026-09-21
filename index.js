@@ -27,8 +27,9 @@ class Denon {
     this.onMode = callbacks.onMode;
     this.onPower = callbacks.onPower;
     this.onVolume = callbacks.onVolume;
+    this.onMute = callbacks.onMute;
     this.sock = null; this.buf = '';
-    this.current = ''; this.power = null; this.volume = null; this.maxVolume = 98;
+    this.current = ''; this.power = null; this.volume = null; this.maxVolume = 98; this.muted = null;
   }
   start() {
     this.connect();
@@ -36,6 +37,7 @@ class Denon {
       this.send('MS?');
       setTimeout(() => this.send('PW?'), 300);
       setTimeout(() => this.send('MV?'), 600);
+      setTimeout(() => this.send('MU?'), 900);
     }, this.pollSec * 1000);
   }
   connect() {
@@ -45,7 +47,7 @@ class Denon {
     s.setKeepAlive(true, 10000);
     s.on('connect', () => {
       this.log.info('Connected to receiver');
-      setTimeout(() => { this.send('MS?'); this.send('PW?'); this.send('MV?'); }, 500);
+      setTimeout(() => { this.send('MS?'); this.send('PW?'); this.send('MV?'); this.send('MU?'); }, 500);
     });
     s.on('data', (d) => {
       this.buf += d.toString('latin1');
@@ -75,6 +77,9 @@ class Denon {
         const v = Denon.parseVol(m[1]);
         if (v !== this.volume) { this.volume = v; this.onVolume(v, this.maxVolume); }
       }
+    } else if (p.startsWith('MUON') || p.startsWith('MUOFF')) {
+      const muted = p.startsWith('MUON');
+      if (muted !== this.muted) { this.muted = muted; this.onMute(muted); }
     }
   }
   send(cmd) {
@@ -105,6 +110,10 @@ class Denon {
     const clamped = Math.max(0, Math.min(Math.round(raw), this.maxVolume));
     this.send('MV' + String(clamped).padStart(2, '0'));
     setTimeout(() => this.send('MV?'), 1000);
+  }
+  setMute(on) {
+    this.send(on ? 'MUON' : 'MUOFF');
+    setTimeout(() => this.send('MU?'), 1000);
   }
 }
 
@@ -211,10 +220,10 @@ class VolumeAccessory {
       .setCharacteristic(Characteristic.SerialNumber, 'denon-volume');
     this.bulb = new Service.Lightbulb(this.name);
     this.bulb.getCharacteristic(Characteristic.On)
-      .onGet(() => !!this.platform.power)
+      .onGet(() => this.isOn())
       .onSet((v) => {
-        this.platform.log.info('Setting power: ' + (v ? 'ON' : 'STANDBY'));
-        this.platform.denon.setPower(v);
+        this.platform.log.info('Setting mute: ' + (v ? 'OFF (unmuted)' : 'ON (muted)'));
+        this.platform.denon.setMute(!v);
       });
     this.bulb.getCharacteristic(Characteristic.Brightness)
       .onGet(() => this.percent())
@@ -234,12 +243,42 @@ class VolumeAccessory {
     if (v == null) return 0;
     return Math.max(0, Math.min(100, Math.round(v)));
   }
+  isOn() {
+    if (this.platform.power === false) return false;
+    return !this.platform.muted;
+  }
   refresh() {
-    this.bulb.updateCharacteristic(this.Characteristic.On, !!this.platform.power);
+    this.bulb.updateCharacteristic(this.Characteristic.On, this.isOn());
     this.bulb.updateCharacteristic(this.Characteristic.Brightness, this.percent());
   }
   getServices() {
     return [this.info, this.bulb];
+  }
+}
+
+class PowerAccessory {
+  constructor(platform, cfg) {
+    const { Service, Characteristic } = platform.api.hap;
+    this.platform = platform;
+    this.Characteristic = Characteristic;
+    this.name = (cfg && cfg.powerName) || 'Denon Power';
+    this.info = new Service.AccessoryInformation()
+      .setCharacteristic(Characteristic.Manufacturer, 'Denon')
+      .setCharacteristic(Characteristic.Model, 'Power')
+      .setCharacteristic(Characteristic.SerialNumber, 'denon-power');
+    this.sw = new Service.Switch(this.name);
+    this.sw.getCharacteristic(Characteristic.On)
+      .onGet(() => !!this.platform.power)
+      .onSet((v) => {
+        this.platform.log.info('Setting power: ' + (v ? 'ON' : 'STANDBY'));
+        this.platform.denon.setPower(v);
+      });
+  }
+  refresh() {
+    this.sw.updateCharacteristic(this.Characteristic.On, !!this.platform.power);
+  }
+  getServices() {
+    return [this.info, this.sw];
   }
 }
 
@@ -251,8 +290,10 @@ class DenonSoundMode {
     this.power = null;
     this.volume = null;
     this.volumeMax = 98;
+    this.muted = null;
     this.groups = (config.groups || []).map((g) => new ModeGroup(this, g));
     this.volumeAccessory = (config.volume && config.volume.enabled) ? new VolumeAccessory(this, config.volume) : null;
+    this.powerAccessory = (config.volume && config.volume.enabled) ? new PowerAccessory(this, config.volume) : null;
     this.denon = new Denon(log, config.host, config.port || 23, config.pollInterval || 5, {
       onMode: (mode) => {
         if (mode !== this.mode) {
@@ -266,10 +307,16 @@ class DenonSoundMode {
         this.log.info('Power: ' + (power ? 'ON' : 'STANDBY'));
         this.groups.forEach((g) => g.refresh());
         if (this.volumeAccessory) this.volumeAccessory.refresh();
+        if (this.powerAccessory) this.powerAccessory.refresh();
       },
       onVolume: (v, max) => {
         this.volume = v;
         this.volumeMax = max;
+        if (this.volumeAccessory) this.volumeAccessory.refresh();
+      },
+      onMute: (muted) => {
+        this.muted = muted;
+        this.log.info('Mute: ' + (muted ? 'ON' : 'OFF'));
         if (this.volumeAccessory) this.volumeAccessory.refresh();
       },
     });
@@ -279,6 +326,7 @@ class DenonSoundMode {
   accessories(callback) {
     const list = [...this.groups];
     if (this.volumeAccessory) list.push(this.volumeAccessory);
+    if (this.powerAccessory) list.push(this.powerAccessory);
     callback(list);
   }
 }

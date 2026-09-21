@@ -15,6 +15,7 @@
         "properties": {
           "enabled": { "title": "Add volume accessory", "type": "boolean" },
           "name": { "title": "Name", "type": "string", "default": "Denon Volume" },
+          "powerName": { "title": "Power switch name", "type": "string", "default": "Denon Power" },
           "limit": { "title": "Maximum volume (raw receiver scale, e.g. 80)", "type": "integer" }
         }
       },
