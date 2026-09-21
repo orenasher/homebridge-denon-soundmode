@@ -16,6 +16,7 @@
           "type": "object",
           "properties": {
             "name": { "title": "Group name", "type": "string", "required": true },
+            "allZoneStereo": { "title": "Add All Zone Stereo switch", "type": "boolean" },
             "modes": {
               "title": "Modes",
               "type": "array",
@@ -23,7 +24,7 @@
                 "type": "object",
                 "properties": {
                   "name": { "title": "Name", "type": "string", "required": true },
-                  "command": { "title": "Command (after MS)", "type": "string", "required": true },
+                  "command": { "title": "Command (after MS); empty = status only", "type": "string" },
                   "match": { "title": "Status regex (optional)", "type": "string" },
                   "stateless": { "title": "Button without status", "type": "boolean" }
                 }

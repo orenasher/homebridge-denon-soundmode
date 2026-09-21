@@ -3,6 +3,7 @@ const net = require('net');
 
 const PLUGIN = '@orenasher/homebridge-denon-soundmode';
 const PLATFORM = 'DenonSoundMode';
+const AZS = 'ALL ZONE STEREO';
 
 module.exports = (api) => {
   api.registerPlatform(PLUGIN, PLATFORM, DenonSoundMode);
@@ -12,7 +13,7 @@ class Denon {
   constructor(log, host, port, pollSec, onMode) {
     this.log = log; this.host = host; this.port = port;
     this.pollSec = pollSec; this.onMode = onMode;
-    this.sock = null; this.buf = '';
+    this.sock = null; this.buf = ''; this.current = '';
   }
   start() {
     this.connect();
@@ -32,7 +33,10 @@ class Denon {
       const parts = this.buf.split(/[\r\n]+/);
       this.buf = parts.pop();
       for (const p of parts) {
-        if (p.startsWith('MS') && !p.startsWith('MSQUICK')) this.onMode(p.slice(2).trim());
+        if (p.startsWith('MS') && !p.startsWith('MSQUICK')) {
+          this.current = p.slice(2).trim();
+          this.onMode(this.current);
+        }
       }
     });
     s.on('error', (e) => this.log.debug('Telnet error: ' + e.message));
@@ -44,10 +48,22 @@ class Denon {
   send(cmd) {
     if (this.sock && this.sock.writable) this.sock.write(cmd + '\r');
   }
+  poll(delays) {
+    for (const t of delays) setTimeout(() => this.send('MS?'), t);
+  }
   setMode(cmd) {
-    this.send('MS' + cmd);
-    setTimeout(() => this.send('MS?'), 1500);
-    setTimeout(() => this.send('MS?'), 4000);
+    if (this.current === AZS) {
+      this.send('MNZST OFF');
+      setTimeout(() => this.send('MS' + cmd), 1000);
+      this.poll([2500, 5000]);
+    } else {
+      this.send('MS' + cmd);
+      this.poll([1500, 4000]);
+    }
+  }
+  setAllZone(on) {
+    this.send(on ? 'MNZST ON' : 'MNZST OFF');
+    this.poll([1500, 4000]);
   }
 }
 
@@ -63,16 +79,24 @@ class ModeGroup {
       .setCharacteristic(Characteristic.Manufacturer, 'Denon')
       .setCharacteristic(Characteristic.Model, 'Sound modes')
       .setCharacteristic(Characteristic.SerialNumber, 'denon-soundmode-' + cfg.name);
-    this.items = (cfg.modes || []).map((m, i) => this.makeItem(m, i));
+    const modes = cfg.modes || [];
+    this.items = modes.map((m, i) => this.makeItem(m, i, 'mode'));
+    if (cfg.allZoneStereo) {
+      this.items.push(this.makeItem({ name: 'All Zone Stereo' }, modes.length, 'azs'));
+    }
   }
-  makeItem(m, i) {
+  makeItem(m, i, kind) {
     const { Service, Characteristic } = this.platform.api.hap;
-    const esc = m.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const item = {
-      cfg: m,
-      stateless: !!m.stateless,
-      match: new RegExp(m.match || '^' + esc + '$'),
-    };
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let match = null;
+    try {
+      if (kind === 'azs') match = new RegExp('^' + esc(AZS) + '$');
+      else if (m.match) match = new RegExp(m.match);
+      else if (m.command) match = new RegExp('^' + esc(m.command) + '$');
+    } catch (e) {
+      this.platform.log.warn('Bad status regex for "' + m.name + '": ' + e.message);
+    }
+    const item = { cfg: m, kind, command: m.command, stateless: !!m.stateless, match };
     const sw = new Service.Switch(m.name, 'sw' + i);
     sw.addOptionalCharacteristic(Characteristic.ConfiguredName);
     sw.setCharacteristic(Characteristic.ConfiguredName, m.name);
@@ -83,7 +107,7 @@ class ModeGroup {
     return item;
   }
   isOn(item) {
-    return !item.stateless && item.match.test(this.platform.mode);
+    return !item.stateless && !!item.match && item.match.test(this.platform.mode);
   }
   refresh() {
     for (const it of this.items) {
@@ -92,6 +116,11 @@ class ModeGroup {
   }
   set(item, v) {
     if (!v) {
+      if (item.kind === 'azs' && this.platform.mode === AZS) {
+        this.platform.log.info('Setting All Zone Stereo: OFF');
+        this.platform.denon.setAllZone(false);
+        return;
+      }
       setTimeout(() => this.refresh(), 500);
       return;
     }
@@ -103,15 +132,24 @@ class ModeGroup {
     const p = this.pending;
     this.pending = [];
     this.timer = null;
-    if (p.length === 1) {
-      const it = p[0];
-      this.platform.log.info('Setting sound mode: ' + it.cfg.command);
-      this.platform.denon.setMode(it.cfg.command);
-      setTimeout(() => this.refresh(), it.stateless ? 1000 : 5000);
-    } else {
+    if (p.length !== 1) {
       this.platform.log.warn('Ignored group toggle (' + p.length + ' switches at once)');
       setTimeout(() => this.refresh(), 300);
+      return;
     }
+    const it = p[0];
+    if (it.kind === 'azs') {
+      this.platform.log.info('Setting All Zone Stereo: ON');
+      this.platform.denon.setAllZone(true);
+    } else if (it.command) {
+      this.platform.log.info('Setting sound mode: ' + it.command);
+      this.platform.denon.setMode(it.command);
+    } else {
+      this.platform.log.warn('"' + it.cfg.name + '" has no command (status only)');
+      setTimeout(() => this.refresh(), 300);
+      return;
+    }
+    setTimeout(() => this.refresh(), it.stateless ? 1000 : 5000);
   }
   getServices() {
     return [this.info, ...this.items.map((i) => i.sw)];

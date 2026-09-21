@@ -25,3 +25,9 @@ Use the settings screen in Homebridge UI, or edit config.json. Each mode has `na
 ## License
 
 MIT
+
+## Groups, All Zone Stereo and Auto (1.1.0)
+
+- Set `"allZoneStereo": true` on a group to add an All Zone Stereo switch (`MNZST ON` / `MNZST OFF`). While it is on, the receiver reports `ALL ZONE STEREO` instead of the underlying mode, and choosing any other mode switches it off first.
+- A mode without `command` is status-only: its switch follows the receiver, but pressing it does nothing. Example: `DTS Virtual:X` on the X2400H is reported as `VIRTUAL:X`, but no command that selects it was found.
+- `Auto` (`MSAUTO`) works, but the receiver then reports the mode it chose (for example `STEREO`), so it is a button without status.
