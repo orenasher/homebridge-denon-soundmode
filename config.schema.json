@@ -14,7 +14,8 @@
         "type": "object",
         "properties": {
           "enabled": { "title": "Add volume accessory", "type": "boolean" },
-          "name": { "title": "Name", "type": "string", "default": "Denon Volume" }
+          "name": { "title": "Name", "type": "string", "default": "Denon Volume" },
+          "limit": { "title": "Maximum volume (raw receiver scale, e.g. 80)", "type": "integer" }
         }
       },
       "groups": {

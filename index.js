@@ -10,6 +10,17 @@ module.exports = (api) => {
 };
 
 class Denon {
+  // Denon sends volume as 2 digits for whole numbers (MV48 = 48.0)
+  // or 3 digits when at a half step (MV485 = 48.5).
+  static parseVol(digits) {
+    if (digits.length === 3) {
+      const whole = parseInt(digits.slice(0, 2), 10);
+      const frac = digits.slice(2) === '5' ? 0.5 : 0;
+      return whole + frac;
+    }
+    return parseInt(digits, 10);
+  }
+
   constructor(log, host, port, pollSec, callbacks) {
     this.log = log; this.host = host; this.port = port;
     this.pollSec = pollSec;
@@ -57,11 +68,11 @@ class Denon {
       if (power !== this.power) { this.power = power; this.onPower(power); }
     } else if (p.startsWith('MVMAX')) {
       const m = p.match(/^MVMAX\s*(\d{2,3})/);
-      if (m) this.maxVolume = parseInt(m[1], 10);
+      if (m) this.maxVolume = Denon.parseVol(m[1]);
     } else if (p.startsWith('MV')) {
       const m = p.match(/^MV(\d{2,3})$/);
       if (m) {
-        const v = parseInt(m[1], 10);
+        const v = Denon.parseVol(m[1]);
         if (v !== this.volume) { this.volume = v; this.onVolume(v, this.maxVolume); }
       }
     }
@@ -90,9 +101,9 @@ class Denon {
     this.send(on ? 'PWON' : 'PWSTANDBY');
     setTimeout(() => this.send('PW?'), 1500);
   }
-  setVolume(percent) {
-    const raw = Math.round((percent / 100) * this.maxVolume);
-    this.send('MV' + String(raw).padStart(2, '0'));
+  setVolume(raw) {
+    const clamped = Math.max(0, Math.min(Math.round(raw), this.maxVolume));
+    this.send('MV' + String(clamped).padStart(2, '0'));
     setTimeout(() => this.send('MV?'), 1000);
   }
 }
@@ -193,6 +204,7 @@ class VolumeAccessory {
     this.platform = platform;
     this.Characteristic = Characteristic;
     this.name = (cfg && cfg.name) || 'Denon Volume';
+    this.limit = (cfg && cfg.limit) || null;
     this.info = new Service.AccessoryInformation()
       .setCharacteristic(Characteristic.Manufacturer, 'Denon')
       .setCharacteristic(Characteristic.Model, 'Volume')
@@ -207,14 +219,20 @@ class VolumeAccessory {
     this.bulb.getCharacteristic(Characteristic.Brightness)
       .onGet(() => this.percent())
       .onSet((v) => {
-        this.platform.log.info('Setting volume: ' + v + '%');
-        this.platform.denon.setVolume(v);
+        const max = this.effectiveMax();
+        const raw = Math.min(Math.round(v), max);
+        this.platform.log.info('Setting volume: ' + raw + ' (limit ' + max + ')');
+        this.platform.denon.setVolume(raw);
       });
+  }
+  effectiveMax() {
+    const real = this.platform.volumeMax || 98;
+    return this.limit ? Math.min(this.limit, real) : real;
   }
   percent() {
     const v = this.platform.volume;
     if (v == null) return 0;
-    return Math.round((v / (this.platform.volumeMax || 98)) * 100);
+    return Math.max(0, Math.min(100, Math.round(v)));
   }
   refresh() {
     this.bulb.updateCharacteristic(this.Characteristic.On, !!this.platform.power);
