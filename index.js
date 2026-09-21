@@ -10,14 +10,22 @@ module.exports = (api) => {
 };
 
 class Denon {
-  constructor(log, host, port, pollSec, onMode) {
+  constructor(log, host, port, pollSec, callbacks) {
     this.log = log; this.host = host; this.port = port;
-    this.pollSec = pollSec; this.onMode = onMode;
-    this.sock = null; this.buf = ''; this.current = '';
+    this.pollSec = pollSec;
+    this.onMode = callbacks.onMode;
+    this.onPower = callbacks.onPower;
+    this.onVolume = callbacks.onVolume;
+    this.sock = null; this.buf = '';
+    this.current = ''; this.power = null; this.volume = null; this.maxVolume = 98;
   }
   start() {
     this.connect();
-    setInterval(() => this.send('MS?'), this.pollSec * 1000);
+    setInterval(() => {
+      this.send('MS?');
+      setTimeout(() => this.send('PW?'), 300);
+      setTimeout(() => this.send('MV?'), 600);
+    }, this.pollSec * 1000);
   }
   connect() {
     const s = net.connect(this.port, this.host);
@@ -26,24 +34,37 @@ class Denon {
     s.setKeepAlive(true, 10000);
     s.on('connect', () => {
       this.log.info('Connected to receiver');
-      setTimeout(() => this.send('MS?'), 500);
+      setTimeout(() => { this.send('MS?'); this.send('PW?'); this.send('MV?'); }, 500);
     });
     s.on('data', (d) => {
       this.buf += d.toString('latin1');
       const parts = this.buf.split(/[\r\n]+/);
       this.buf = parts.pop();
-      for (const p of parts) {
-        if (p.startsWith('MS') && !p.startsWith('MSQUICK')) {
-          this.current = p.slice(2).trim();
-          this.onMode(this.current);
-        }
-      }
+      for (const p of parts) this.handleLine(p);
     });
     s.on('error', (e) => this.log.debug('Telnet error: ' + e.message));
     s.on('close', () => {
       if (this.sock === s) this.sock = null;
       setTimeout(() => this.connect(), 5000);
     });
+  }
+  handleLine(p) {
+    if (p.startsWith('MS') && !p.startsWith('MSQUICK')) {
+      this.current = p.slice(2).trim();
+      this.onMode(this.current);
+    } else if (p.startsWith('PWON') || p.startsWith('PWSTANDBY')) {
+      const power = p.startsWith('PWON');
+      if (power !== this.power) { this.power = power; this.onPower(power); }
+    } else if (p.startsWith('MVMAX')) {
+      const m = p.match(/^MVMAX\s*(\d{2,3})/);
+      if (m) this.maxVolume = parseInt(m[1], 10);
+    } else if (p.startsWith('MV')) {
+      const m = p.match(/^MV(\d{2,3})$/);
+      if (m) {
+        const v = parseInt(m[1], 10);
+        if (v !== this.volume) { this.volume = v; this.onVolume(v, this.maxVolume); }
+      }
+    }
   }
   send(cmd) {
     if (this.sock && this.sock.writable) this.sock.write(cmd + '\r');
@@ -64,6 +85,15 @@ class Denon {
   setAllZone(on) {
     this.send(on ? 'MNZST ON' : 'MNZST OFF');
     this.poll([1500, 4000]);
+  }
+  setPower(on) {
+    this.send(on ? 'PWON' : 'PWSTANDBY');
+    setTimeout(() => this.send('PW?'), 1500);
+  }
+  setVolume(percent) {
+    const raw = Math.round((percent / 100) * this.maxVolume);
+    this.send('MV' + String(raw).padStart(2, '0'));
+    setTimeout(() => this.send('MV?'), 1000);
   }
 }
 
@@ -107,6 +137,7 @@ class ModeGroup {
     return item;
   }
   isOn(item) {
+    if (this.platform.power === false) return false;
     return !item.stateless && !!item.match && item.match.test(this.platform.mode);
   }
   refresh() {
@@ -156,23 +187,80 @@ class ModeGroup {
   }
 }
 
+class VolumeAccessory {
+  constructor(platform, cfg) {
+    const { Service, Characteristic } = platform.api.hap;
+    this.platform = platform;
+    this.Characteristic = Characteristic;
+    this.name = (cfg && cfg.name) || 'Denon Volume';
+    this.info = new Service.AccessoryInformation()
+      .setCharacteristic(Characteristic.Manufacturer, 'Denon')
+      .setCharacteristic(Characteristic.Model, 'Volume')
+      .setCharacteristic(Characteristic.SerialNumber, 'denon-volume');
+    this.bulb = new Service.Lightbulb(this.name);
+    this.bulb.getCharacteristic(Characteristic.On)
+      .onGet(() => !!this.platform.power)
+      .onSet((v) => {
+        this.platform.log.info('Setting power: ' + (v ? 'ON' : 'STANDBY'));
+        this.platform.denon.setPower(v);
+      });
+    this.bulb.getCharacteristic(Characteristic.Brightness)
+      .onGet(() => this.percent())
+      .onSet((v) => {
+        this.platform.log.info('Setting volume: ' + v + '%');
+        this.platform.denon.setVolume(v);
+      });
+  }
+  percent() {
+    const v = this.platform.volume;
+    if (v == null) return 0;
+    return Math.round((v / (this.platform.volumeMax || 98)) * 100);
+  }
+  refresh() {
+    this.bulb.updateCharacteristic(this.Characteristic.On, !!this.platform.power);
+    this.bulb.updateCharacteristic(this.Characteristic.Brightness, this.percent());
+  }
+  getServices() {
+    return [this.info, this.bulb];
+  }
+}
+
 class DenonSoundMode {
   constructor(log, config, api) {
     this.log = log;
     this.api = api;
     this.mode = '';
+    this.power = null;
+    this.volume = null;
+    this.volumeMax = 98;
     this.groups = (config.groups || []).map((g) => new ModeGroup(this, g));
-    this.denon = new Denon(log, config.host, config.port || 23, config.pollInterval || 5, (mode) => {
-      if (mode !== this.mode) {
-        this.mode = mode;
-        this.log.info('Sound mode: ' + mode);
+    this.volumeAccessory = (config.volume && config.volume.enabled) ? new VolumeAccessory(this, config.volume) : null;
+    this.denon = new Denon(log, config.host, config.port || 23, config.pollInterval || 5, {
+      onMode: (mode) => {
+        if (mode !== this.mode) {
+          this.mode = mode;
+          this.log.info('Sound mode: ' + mode);
+          this.groups.forEach((g) => g.refresh());
+        }
+      },
+      onPower: (power) => {
+        this.power = power;
+        this.log.info('Power: ' + (power ? 'ON' : 'STANDBY'));
         this.groups.forEach((g) => g.refresh());
-      }
+        if (this.volumeAccessory) this.volumeAccessory.refresh();
+      },
+      onVolume: (v, max) => {
+        this.volume = v;
+        this.volumeMax = max;
+        if (this.volumeAccessory) this.volumeAccessory.refresh();
+      },
     });
     this.log.info('Developed and tested only on Denon AVR-X2400H; other models are untested.');
     api.on('didFinishLaunching', () => this.denon.start());
   }
   accessories(callback) {
-    callback(this.groups);
+    const list = [...this.groups];
+    if (this.volumeAccessory) list.push(this.volumeAccessory);
+    callback(list);
   }
 }

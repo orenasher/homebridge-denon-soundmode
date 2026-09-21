@@ -9,6 +9,14 @@
       "host": { "title": "Receiver IP", "type": "string", "required": true },
       "port": { "title": "Telnet port", "type": "integer", "default": 23 },
       "pollInterval": { "title": "Poll interval (seconds)", "type": "integer", "default": 5 },
+      "volume": {
+        "title": "Volume / power accessory",
+        "type": "object",
+        "properties": {
+          "enabled": { "title": "Add volume accessory", "type": "boolean" },
+          "name": { "title": "Name", "type": "string", "default": "Denon Volume" }
+        }
+      },
       "groups": {
         "title": "Groups (one tile each)",
         "type": "array",
