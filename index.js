@@ -5,13 +5,25 @@ const PLUGIN = '@orenasher/homebridge-denon-soundmode';
 const PLATFORM = 'DenonSoundMode';
 const AZS = 'ALL ZONE STEREO';
 
+const INPUTS = [
+  { name: 'TV Audio', code: 'TV' },
+  { name: 'CBL/SAT', code: 'SAT/CBL' },
+  { name: 'DVD', code: 'DVD' },
+  { name: 'Blu-Ray', code: 'BD' },
+  { name: 'Game', code: 'GAME' },
+  { name: 'AUX1', code: 'AUX1' },
+  { name: 'AUX2', code: 'AUX2' },
+  { name: 'Media Player', code: 'MPLAY' },
+  { name: 'CD', code: 'CD' },
+  { name: 'Tuner', code: 'TUNER' },
+  { name: 'HEOS Music', code: 'NET' },
+];
+
 module.exports = (api) => {
   api.registerPlatform(PLUGIN, PLATFORM, DenonSoundMode);
 };
 
 class Denon {
-  // Denon sends volume as 2 digits for whole numbers (MV48 = 48.0)
-  // or 3 digits when at a half step (MV485 = 48.5).
   static parseVol(digits) {
     if (digits.length === 3) {
       const whole = parseInt(digits.slice(0, 2), 10);
@@ -20,7 +32,6 @@ class Denon {
     }
     return parseInt(digits, 10);
   }
-
   constructor(log, host, port, pollSec, callbacks) {
     this.log = log; this.host = host; this.port = port;
     this.pollSec = pollSec;
@@ -28,8 +39,10 @@ class Denon {
     this.onPower = callbacks.onPower;
     this.onVolume = callbacks.onVolume;
     this.onMute = callbacks.onMute;
+    this.onInput = callbacks.onInput;
     this.sock = null; this.buf = '';
-    this.current = ''; this.power = null; this.volume = null; this.maxVolume = 98; this.muted = null;
+    this.current = ''; this.power = null; this.volume = null; this.maxVolume = 98;
+    this.muted = null; this.input = null;
   }
   start() {
     this.connect();
@@ -38,6 +51,7 @@ class Denon {
       setTimeout(() => this.send('PW?'), 300);
       setTimeout(() => this.send('MV?'), 600);
       setTimeout(() => this.send('MU?'), 900);
+      setTimeout(() => this.send('SI?'), 1200);
     }, this.pollSec * 1000);
   }
   connect() {
@@ -47,7 +61,9 @@ class Denon {
     s.setKeepAlive(true, 10000);
     s.on('connect', () => {
       this.log.info('Connected to receiver');
-      setTimeout(() => { this.send('MS?'); this.send('PW?'); this.send('MV?'); this.send('MU?'); }, 500);
+      setTimeout(() => {
+        this.send('MS?'); this.send('PW?'); this.send('MV?'); this.send('MU?'); this.send('SI?');
+      }, 500);
     });
     s.on('data', (d) => {
       this.buf += d.toString('latin1');
@@ -80,6 +96,9 @@ class Denon {
     } else if (p.startsWith('MUON') || p.startsWith('MUOFF')) {
       const muted = p.startsWith('MUON');
       if (muted !== this.muted) { this.muted = muted; this.onMute(muted); }
+    } else if (p.startsWith('SI')) {
+      const input = p.slice(2).trim();
+      if (input && input !== this.input) { this.input = input; this.onInput(input); }
     }
   }
   send(cmd) {
@@ -115,6 +134,10 @@ class Denon {
     this.send(on ? 'MUON' : 'MUOFF');
     setTimeout(() => this.send('MU?'), 1000);
   }
+  setInput(code) {
+    this.send('SI' + code);
+    setTimeout(() => this.send('SI?'), 1000);
+  }
 }
 
 class ModeGroup {
@@ -125,10 +148,16 @@ class ModeGroup {
     this.Characteristic = Characteristic;
     this.pending = [];
     this.timer = null;
-    this.info = new Service.AccessoryInformation()
-      .setCharacteristic(Characteristic.Manufacturer, 'Denon')
+
+    const id = platform.api.hap.uuid.generate(PLUGIN + '-group-' + cfg.name);
+    const { accessory } = platform.getOrCreateAccessory(cfg.name, id);
+    this.accessory = accessory;
+
+    const info = accessory.getService(Service.AccessoryInformation) || accessory.addService(Service.AccessoryInformation);
+    info.setCharacteristic(Characteristic.Manufacturer, 'Denon')
       .setCharacteristic(Characteristic.Model, 'Sound modes')
       .setCharacteristic(Characteristic.SerialNumber, 'denon-soundmode-' + cfg.name);
+
     const modes = cfg.modes || [];
     this.items = modes.map((m, i) => this.makeItem(m, i, 'mode'));
     if (cfg.allZoneStereo) {
@@ -146,14 +175,16 @@ class ModeGroup {
     } catch (e) {
       this.platform.log.warn('Bad status regex for "' + m.name + '": ' + e.message);
     }
-    const item = { cfg: m, kind, command: m.command, stateless: !!m.stateless, match };
-    const sw = new Service.Switch(m.name, 'sw' + i);
+    const subtype = 'sw' + i;
+    let sw = this.accessory.getServiceById(Service.Switch, subtype);
+    if (!sw) sw = this.accessory.addService(Service.Switch, m.name, subtype);
+    sw.setCharacteristic(Characteristic.Name, m.name);
     sw.addOptionalCharacteristic(Characteristic.ConfiguredName);
     sw.setCharacteristic(Characteristic.ConfiguredName, m.name);
+    const item = { cfg: m, kind, command: m.command, stateless: !!m.stateless, match, sw };
     sw.getCharacteristic(Characteristic.On)
       .onGet(() => this.isOn(item))
       .onSet((v) => this.set(item, v));
-    item.sw = sw;
     return item;
   }
   isOn(item) {
@@ -202,9 +233,6 @@ class ModeGroup {
     }
     setTimeout(() => this.refresh(), it.stateless ? 1000 : 5000);
   }
-  getServices() {
-    return [this.info, ...this.items.map((i) => i.sw)];
-  }
 }
 
 class VolumeAccessory {
@@ -214,11 +242,17 @@ class VolumeAccessory {
     this.Characteristic = Characteristic;
     this.name = (cfg && cfg.name) || 'Denon Volume';
     this.limit = (cfg && cfg.limit) || null;
-    this.info = new Service.AccessoryInformation()
-      .setCharacteristic(Characteristic.Manufacturer, 'Denon')
+
+    const id = platform.api.hap.uuid.generate(PLUGIN + '-volume-' + this.name);
+    const { accessory } = platform.getOrCreateAccessory(this.name, id);
+    this.accessory = accessory;
+
+    const info = accessory.getService(Service.AccessoryInformation) || accessory.addService(Service.AccessoryInformation);
+    info.setCharacteristic(Characteristic.Manufacturer, 'Denon')
       .setCharacteristic(Characteristic.Model, 'Volume')
       .setCharacteristic(Characteristic.SerialNumber, 'denon-volume');
-    this.bulb = new Service.Lightbulb(this.name);
+
+    this.bulb = accessory.getService(Service.Lightbulb) || accessory.addService(Service.Lightbulb, this.name);
     this.bulb.getCharacteristic(Characteristic.On)
       .onGet(() => this.isOn())
       .onSet((v) => {
@@ -251,34 +285,140 @@ class VolumeAccessory {
     this.bulb.updateCharacteristic(this.Characteristic.On, this.isOn());
     this.bulb.updateCharacteristic(this.Characteristic.Brightness, this.percent());
   }
-  getServices() {
-    return [this.info, this.bulb];
-  }
 }
 
-class PowerAccessory {
+class TelevisionAccessory {
   constructor(platform, cfg) {
     const { Service, Characteristic } = platform.api.hap;
     this.platform = platform;
     this.Characteristic = Characteristic;
-    this.name = (cfg && cfg.powerName) || 'Denon Power';
-    this.info = new Service.AccessoryInformation()
-      .setCharacteristic(Characteristic.Manufacturer, 'Denon')
-      .setCharacteristic(Characteristic.Model, 'Power')
-      .setCharacteristic(Characteristic.SerialNumber, 'denon-power');
-    this.sw = new Service.Switch(this.name);
-    this.sw.getCharacteristic(Characteristic.On)
-      .onGet(() => !!this.platform.power)
+    this.name = (cfg && cfg.ampName) || 'Denon Amp';
+
+    const id = platform.api.hap.uuid.generate(PLUGIN + '-amp-' + this.name);
+    const accessory = new platform.api.platformAccessory(
+      this.name,
+      id,
+      platform.api.hap.Categories.AUDIO_RECEIVER
+    );
+    this.accessory = accessory;
+
+    const info = accessory.getService(Service.AccessoryInformation) || accessory.addService(Service.AccessoryInformation);
+    info.setCharacteristic(Characteristic.Manufacturer, 'Denon')
+      .setCharacteristic(Characteristic.Model, 'AVR-X2400H')
+      .setCharacteristic(Characteristic.SerialNumber, 'denon-amp');
+
+    this.tv = accessory.getService(Service.Television) || accessory.addService(Service.Television, this.name);
+    this.tv.setCharacteristic(Characteristic.ConfiguredName, this.name);
+    this.tv.setCharacteristic(
+      Characteristic.SleepDiscoveryMode,
+      Characteristic.SleepDiscoveryMode.ALWAYS_DISCOVERABLE
+    );
+    this.tv.getCharacteristic(Characteristic.Active)
+      .onGet(() => (this.platform.power ? 1 : 0))
       .onSet((v) => {
         this.platform.log.info('Setting power: ' + (v ? 'ON' : 'STANDBY'));
-        this.platform.denon.setPower(v);
+        this.platform.denon.setPower(!!v);
       });
+    this.tv.getCharacteristic(Characteristic.ActiveIdentifier)
+      .onGet(() => this.currentIdentifier())
+      .onSet((id2) => {
+        const input = INPUTS[id2 - 1];
+        if (input) {
+          this.platform.log.info('Setting input: ' + input.name);
+          this.platform.denon.setInput(input.code);
+        }
+      });
+
+    this.inputs = INPUTS.map((inp, i) => {
+      const subtype = 'ampinput' + i;
+      let src = accessory.getServiceById(Service.InputSource, subtype);
+      if (!src) src = accessory.addService(Service.InputSource, inp.name, subtype);
+      src.setCharacteristic(Characteristic.Identifier, i + 1)
+        .setCharacteristic(Characteristic.ConfiguredName, inp.name)
+        .setCharacteristic(Characteristic.IsConfigured, Characteristic.IsConfigured.CONFIGURED)
+        .setCharacteristic(Characteristic.InputSourceType, Characteristic.InputSourceType.HDMI)
+        .setCharacteristic(
+          Characteristic.CurrentVisibilityState,
+          Characteristic.CurrentVisibilityState.SHOWN
+        );
+      this.tv.addLinkedService(src);
+      return src;
+    });
+  }
+  currentIdentifier() {
+    const code = this.platform.input;
+    const idx = INPUTS.findIndex((i) => i.code === code);
+    return idx >= 0 ? idx + 1 : 0;
   }
   refresh() {
-    this.sw.updateCharacteristic(this.Characteristic.On, !!this.platform.power);
+    this.tv.updateCharacteristic(this.Characteristic.Active, this.platform.power ? 1 : 0);
+    this.tv.updateCharacteristic(this.Characteristic.ActiveIdentifier, this.currentIdentifier());
   }
-  getServices() {
-    return [this.info, this.sw];
+}
+
+class InputSwitchGroup {
+  constructor(platform, cfg) {
+    const { Service, Characteristic } = platform.api.hap;
+    this.platform = platform;
+    this.Characteristic = Characteristic;
+    this.name = (cfg && cfg.switchGroupName) || 'Denon Inputs';
+    this.pending = [];
+    this.timer = null;
+
+    const id = platform.api.hap.uuid.generate(PLUGIN + '-inputs-' + this.name);
+    const { accessory } = platform.getOrCreateAccessory(this.name, id);
+    this.accessory = accessory;
+
+    const info = accessory.getService(Service.AccessoryInformation) || accessory.addService(Service.AccessoryInformation);
+    info.setCharacteristic(Characteristic.Manufacturer, 'Denon')
+      .setCharacteristic(Characteristic.Model, 'Inputs')
+      .setCharacteristic(Characteristic.SerialNumber, 'denon-inputs');
+
+    this.items = INPUTS.map((inp, i) => {
+      const subtype = 'inputsw' + i;
+      let sw = accessory.getServiceById(Service.Switch, subtype);
+      if (!sw) sw = accessory.addService(Service.Switch, inp.name, subtype);
+      sw.setCharacteristic(Characteristic.Name, inp.name);
+      sw.addOptionalCharacteristic(Characteristic.ConfiguredName);
+      sw.setCharacteristic(Characteristic.ConfiguredName, inp.name);
+      const item = { code: inp.code, sw };
+      sw.getCharacteristic(Characteristic.On)
+        .onGet(() => this.isOn(item))
+        .onSet((v) => this.set(item, v));
+      return item;
+    });
+  }
+  isOn(item) {
+    if (this.platform.power === false) return false;
+    return this.platform.input === item.code;
+  }
+  refresh() {
+    for (const it of this.items) {
+      it.sw.updateCharacteristic(this.Characteristic.On, this.isOn(it));
+    }
+  }
+  set(item, v) {
+    if (!v) {
+      setTimeout(() => this.refresh(), 500);
+      return;
+    }
+    this.pending.push(item);
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), 400);
+  }
+  flush() {
+    const p = this.pending;
+    this.pending = [];
+    this.timer = null;
+    if (p.length !== 1) {
+      this.platform.log.warn('Ignored group toggle (' + p.length + ' switches at once)');
+      setTimeout(() => this.refresh(), 300);
+      return;
+    }
+    const it = p[0];
+    this.platform.log.info('Setting input: ' + it.code);
+    this.platform.denon.setInput(it.code);
+    setTimeout(() => this.refresh(), 2000);
   }
 }
 
@@ -286,15 +426,75 @@ class DenonSoundMode {
   constructor(log, config, api) {
     this.log = log;
     this.api = api;
+    this.config = config;
     this.mode = '';
     this.power = null;
     this.volume = null;
     this.volumeMax = 98;
     this.muted = null;
+    this.input = null;
+    this.cached = new Map();
+
+    api.on('didFinishLaunching', () => this.setup());
+  }
+
+  configureAccessory(accessory) {
+    this.cached.set(accessory.UUID, accessory);
+  }
+
+  getOrCreateAccessory(name, uuid) {
+    let accessory = this.cached.get(uuid);
+    let isNew = false;
+    if (!accessory) {
+      accessory = new this.api.platformAccessory(name, uuid);
+      isNew = true;
+    } else {
+      accessory.displayName = name;
+    }
+    return { accessory, isNew };
+  }
+
+  setup() {
+    const config = this.config;
+    const keep = new Set();
+    const toRegister = [];
+
     this.groups = (config.groups || []).map((g) => new ModeGroup(this, g));
     this.volumeAccessory = (config.volume && config.volume.enabled) ? new VolumeAccessory(this, config.volume) : null;
-    this.powerAccessory = (config.volume && config.volume.enabled) ? new PowerAccessory(this, config.volume) : null;
-    this.denon = new Denon(log, config.host, config.port || 23, config.pollInterval || 5, {
+    this.televisionAccessory = (config.amp && config.amp.enabled) ? new TelevisionAccessory(this, config.amp) : null;
+    this.inputSwitchGroup = (config.amp && config.amp.enabled) ? new InputSwitchGroup(this, config.amp) : null;
+    if (this.televisionAccessory) {
+      this.log.info('Publishing Denon Amp as a standalone (external) HomeKit accessory.');
+      this.api.publishExternalAccessories(PLUGIN, [this.televisionAccessory.accessory]);
+    }
+
+    const all = [
+      ...this.groups,
+      this.volumeAccessory,
+      this.inputSwitchGroup,
+    ].filter(Boolean);
+
+    for (const w of all) {
+      keep.add(w.accessory.UUID);
+      if (!this.cached.has(w.accessory.UUID)) {
+        toRegister.push(w.accessory);
+        this.cached.set(w.accessory.UUID, w.accessory);
+      }
+    }
+    if (toRegister.length) {
+      this.api.registerPlatformAccessories(PLUGIN, PLATFORM, toRegister);
+    }
+
+    const stale = [];
+    for (const [uuid, accessory] of this.cached) {
+      if (!keep.has(uuid)) stale.push(accessory);
+    }
+    if (stale.length) {
+      this.log.info('Removing ' + stale.length + ' stale accessory(ies): ' + stale.map((a) => a.displayName).join(', '));
+      this.api.unregisterPlatformAccessories(PLUGIN, PLATFORM, stale);
+    }
+
+    this.denon = new Denon(this.log, config.host, config.port || 23, config.pollInterval || 5, {
       onMode: (mode) => {
         if (mode !== this.mode) {
           this.mode = mode;
@@ -307,7 +507,8 @@ class DenonSoundMode {
         this.log.info('Power: ' + (power ? 'ON' : 'STANDBY'));
         this.groups.forEach((g) => g.refresh());
         if (this.volumeAccessory) this.volumeAccessory.refresh();
-        if (this.powerAccessory) this.powerAccessory.refresh();
+        if (this.televisionAccessory) this.televisionAccessory.refresh();
+        if (this.inputSwitchGroup) this.inputSwitchGroup.refresh();
       },
       onVolume: (v, max) => {
         this.volume = v;
@@ -319,14 +520,14 @@ class DenonSoundMode {
         this.log.info('Mute: ' + (muted ? 'ON' : 'OFF'));
         if (this.volumeAccessory) this.volumeAccessory.refresh();
       },
+      onInput: (input) => {
+        this.input = input;
+        this.log.info('Input: ' + input);
+        if (this.televisionAccessory) this.televisionAccessory.refresh();
+        if (this.inputSwitchGroup) this.inputSwitchGroup.refresh();
+      },
     });
     this.log.info('Developed and tested only on Denon AVR-X2400H; other models are untested.');
-    api.on('didFinishLaunching', () => this.denon.start());
-  }
-  accessories(callback) {
-    const list = [...this.groups];
-    if (this.volumeAccessory) list.push(this.volumeAccessory);
-    if (this.powerAccessory) list.push(this.powerAccessory);
-    callback(list);
+    this.denon.start();
   }
 }
