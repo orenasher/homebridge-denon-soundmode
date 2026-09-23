@@ -256,12 +256,22 @@ class VolumeAccessory {
     this.bulb.getCharacteristic(Characteristic.On)
       .onGet(() => this.isOn())
       .onSet((v) => {
+        if (this.platform.power !== true) {
+          this.platform.log.debug('Ignoring mute toggle: amp is off.');
+          setTimeout(() => this.refresh(), 300);
+          return;
+        }
         this.platform.log.info('Setting mute: ' + (v ? 'OFF (unmuted)' : 'ON (muted)'));
         this.platform.denon.setMute(!v);
       });
     this.bulb.getCharacteristic(Characteristic.Brightness)
       .onGet(() => this.percent())
       .onSet((v) => {
+        if (this.platform.power !== true) {
+          this.platform.log.debug('Ignoring volume change: amp is off.');
+          setTimeout(() => this.refresh(), 300);
+          return;
+        }
         const max = this.effectiveMax();
         const raw = Math.min(Math.round(v), max);
         this.platform.log.info('Setting volume: ' + raw + ' (limit ' + max + ')');
