@@ -3,6 +3,8 @@
 
 # homebridge-denon-soundmode
 
+[![Donate](https://img.shields.io/badge/Donate-PayPal-blue?logo=paypal)](https://paypal.me/orenasher)
+
 Homebridge plugin that exposes the sound modes (surround modes) of a Denon AVR as HomeKit switches, with status feedback. Modes are grouped into one accessory (tile) per group.
 
 ## Tested hardware
@@ -34,3 +36,7 @@ MIT
 - Set `"allZoneStereo": true` on a group to add an All Zone Stereo switch (`MNZST ON` / `MNZST OFF`). While it is on, the receiver reports `ALL ZONE STEREO` instead of the underlying mode, and choosing any other mode switches it off first.
 - A mode without `command` is status-only: its switch follows the receiver, but pressing it does nothing. Example: `DTS Virtual:X` on the X2400H is reported as `VIRTUAL:X`, but no command that selects it was found.
 - `Auto` (`MSAUTO`) works, but the receiver then reports the mode it chose (for example `STEREO`), so it is a button without status.
+
+## Support
+
+If this plugin saves you time, you can buy me a coffee: [paypal.me/orenasher](https://paypal.me/orenasher). Thank you!
