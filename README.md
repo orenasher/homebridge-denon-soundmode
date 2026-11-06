@@ -1,3 +1,5 @@
+<p align="center"><img src="icon-512.png" width="120" alt=""></p>
+
 <p align="center"><img src="icon.svg" width="96" alt="Denon sound modes"></p>
 
 
