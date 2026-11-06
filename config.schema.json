@@ -5,26 +5,62 @@
   "schema": {
     "type": "object",
     "properties": {
-      "name": { "title": "Name", "type": "string", "default": "Denon Sound Modes" },
-      "host": { "title": "Receiver IP", "type": "string", "required": true },
-      "port": { "title": "Telnet port", "type": "integer", "default": 23 },
-      "pollInterval": { "title": "Poll interval (seconds)", "type": "integer", "default": 5 },
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Denon Sound Modes"
+      },
+      "host": {
+        "title": "Receiver IP",
+        "type": "string"
+      },
+      "port": {
+        "title": "Telnet port",
+        "type": "integer",
+        "default": 23
+      },
+      "pollInterval": {
+        "title": "Poll interval (seconds)",
+        "type": "integer",
+        "default": 5
+      },
       "volume": {
         "title": "Volume / power accessory",
         "type": "object",
         "properties": {
-          "enabled": { "title": "Add volume accessory", "type": "boolean" },
-          "name": { "title": "Name", "type": "string", "default": "Denon Volume" },
-          "limit": { "title": "Maximum volume (raw receiver scale, e.g. 80)", "type": "integer" }
+          "enabled": {
+            "title": "Add volume accessory",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "default": "Denon Volume"
+          },
+          "limit": {
+            "title": "Maximum volume (raw receiver scale, e.g. 80)",
+            "type": "integer"
+          }
         }
       },
       "amp": {
         "title": "Amp (Television + input switches)",
         "type": "object",
         "properties": {
-          "enabled": { "title": "Add amp/input accessories", "type": "boolean" },
-          "ampName": { "title": "Amplifier name", "type": "string", "default": "Denon Amp" },
-          "switchGroupName": { "title": "Input switches group name", "type": "string", "default": "Denon Inputs" }
+          "enabled": {
+            "title": "Add amp/input accessories",
+            "type": "boolean"
+          },
+          "ampName": {
+            "title": "Amplifier name",
+            "type": "string",
+            "default": "Denon Amp"
+          },
+          "switchGroupName": {
+            "title": "Input switches group name",
+            "type": "string",
+            "default": "Denon Inputs"
+          }
         }
       },
       "groups": {
@@ -33,24 +69,51 @@
         "items": {
           "type": "object",
           "properties": {
-            "name": { "title": "Group name", "type": "string", "required": true },
-            "allZoneStereo": { "title": "Add All Zone Stereo switch", "type": "boolean" },
+            "name": {
+              "title": "Group name",
+              "type": "string"
+            },
+            "allZoneStereo": {
+              "title": "Add All Zone Stereo switch",
+              "type": "boolean"
+            },
             "modes": {
               "title": "Modes",
               "type": "array",
               "items": {
                 "type": "object",
                 "properties": {
-                  "name": { "title": "Name", "type": "string", "required": true },
-                  "command": { "title": "Command (after MS); empty = status only", "type": "string" },
-                  "match": { "title": "Status regex (optional)", "type": "string" },
-                  "stateless": { "title": "Button without status", "type": "boolean" }
-                }
+                  "name": {
+                    "title": "Name",
+                    "type": "string"
+                  },
+                  "command": {
+                    "title": "Command (after MS); empty = status only",
+                    "type": "string"
+                  },
+                  "match": {
+                    "title": "Status regex (optional)",
+                    "type": "string"
+                  },
+                  "stateless": {
+                    "title": "Button without status",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
               }
             }
-          }
+          },
+          "required": [
+            "name"
+          ]
         }
       }
-    }
+    },
+    "required": [
+      "host"
+    ]
   }
 }
